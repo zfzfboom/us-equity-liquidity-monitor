@@ -2,8 +2,7 @@ name: Daily Liquidity Summary to Telegram
 
 on:
   schedule:
-    # 16:30 America/New_York ≈ 21:30 UTC (EST) / 20:30 UTC (EDT)
-    - cron: '30 21 * * 1-5'   # Monday to Friday
+    - cron: '30 21 * * 1-5'
   workflow_dispatch:
 
 jobs:
@@ -18,87 +17,81 @@ jobs:
         run: |
           TZ=America/New_York date +'%Y-%m-%d' > date.txt
           echo "today=$(cat date.txt)" >> $GITHUB_OUTPUT
-          echo "Today (ET): $(cat date.txt)"
 
-      - name: Prepare message
-        id: msg
-        run: |
-          TODAY=${{ steps.date.outputs.today }}
-          FILE="daily/${TODAY}.md"
-          
-          if [ -f "$FILE" ]; then
-            echo "Found daily report: $FILE"
-            
-            # Extract key fields using simple parsing
-            SPX=$(grep -E '^\*\*SPX' "$FILE" | head -1 | sed 's/.*：//' | sed 's/.*: //' | xargs || echo "-")
-            STATUS=$(grep -E '综合状态|市场状态' "$FILE" | head -1 | sed 's/.*：//' | sed 's/.*: //' | xargs || echo "-")
-            GEX=$(grep -iE 'GEX' "$FILE" | head -1 | sed 's/.*：//' | sed 's/.*: //' | xargs || echo "-")
-            VVIX=$(grep -iE 'VVIX' "$FILE" | head -1 | sed 's/.*：//' | sed 's/.*: //' | xargs || echo "-")
-            
-            # Get the conclusion section if exists
-            CONCLUSION=$(sed -n '/综合判断与结论/,/^## /p' "$FILE" | head -20 | sed '/^## /d' || true)
-            if [ -z "$CONCLUSION" ]; then
-              CONCLUSION=$(tail -30 "$FILE")
-            fi
-            
-            # Build a clean, structured message
-            MESSAGE=$(cat << EOF
-📊 *美股流动性每日观测*
-📅 ${TODAY}
-
-*状态概览*
-• 综合状态：*${STATUS}*
-• SPX：${SPX}
-• GEX：${GEX}
-• VVIX：${VVIX}
-
-*详细内容*
-$(echo "$CONCLUSION" | head -c 2800)
-
-——
-🔗 [查看完整记录](https://github.com/zfzfboom/us-equity-liquidity-monitor/blob/main/daily/${TODAY}.md)
-EOF
-)
-          else
-            echo "No daily report found for $TODAY, sending structured reminder"
-            
-            MESSAGE=$(cat << EOF
-🚨 *美股流动性观测提醒*
-📅 ${TODAY}
-
-今日尚未提交观测记录。
-
-*请完成以下步骤：*
-1. 打开检查清单填写今日数据
-2. 复制模板生成 daily/${TODAY}.md
-3. 提交到仓库
-
-📋 [每日检查清单](https://github.com/zfzfboom/us-equity-liquidity-monitor/blob/main/checklist/daily-checklist.md)
-📝 [总结模板](https://github.com/zfzfboom/us-equity-liquidity-monitor/blob/main/daily/template.md)
-
-提交后可手动触发 Actions 立即推送，或等待明日定时任务。
-EOF
-)
-          fi
-          
-          # Write message to file (handle special chars better)
-          printf "%s" "$MESSAGE" > message.txt
-
-      - name: Send to Telegram
+      - name: Prepare and send message
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TODAY: ${{ steps.date.outputs.today }}
         run: |
+          set -e
+
           if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
             echo "Error: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID secret is missing"
             exit 1
           fi
-          
-          # Use --data-urlencode for better handling of special characters and newlines
+
+          FILE="daily/${TODAY}.md"
+
+          if [ -f "$FILE" ]; then
+            echo "Found daily report: $FILE"
+
+            # Build structured message
+            {
+              echo "📊 *美股流动性每日观测*"
+              echo "📅 ${TODAY}"
+              echo ""
+              echo "*状态概览*"
+
+              # Try to extract key info
+              STATUS=$(grep -E '综合状态|市场状态' "$FILE" | head -1 | sed 's/.*[：:]//' | xargs || true)
+              SPX=$(grep -iE 'SPX' "$FILE" | head -1 | sed 's/.*[：:]//' | xargs || true)
+              GEX=$(grep -iE 'GEX' "$FILE" | head -1 | sed 's/.*[：:]//' | xargs || true)
+              VVIX=$(grep -iE 'VVIX' "$FILE" | head -1 | sed 's/.*[：:]//' | xargs || true)
+
+              [ -n "$STATUS" ] && echo "• 综合状态：*${STATUS}*"
+              [ -n "$SPX" ] && echo "• SPX：${SPX}"
+              [ -n "$GEX" ] && echo "• GEX：${GEX}"
+              [ -n "$VVIX" ] && echo "• VVIX：${VVIX}"
+
+              echo ""
+              echo "*详细内容*"
+              # Take the last part of the file as conclusion (usually the summary)
+              tail -40 "$FILE" | head -c 2600
+              echo ""
+              echo "——"
+              echo "🔗 完整记录：https://github.com/zfzfboom/us-equity-liquidity-monitor/blob/main/daily/${TODAY}.md"
+            } > message.txt
+
+          else
+            echo "No daily report found for $TODAY"
+
+            {
+              echo "🚨 *美股流动性观测提醒*"
+              echo "📅 ${TODAY}"
+              echo ""
+              echo "今日尚未提交观测记录。"
+              echo ""
+              echo "*请完成以下步骤：*"
+              echo "1. 填写每日检查清单"
+              echo "2. 使用模板创建 daily/${TODAY}.md"
+              echo "3. 提交到仓库"
+              echo ""
+              echo "📋 检查清单："
+              echo "https://github.com/zfzfboom/us-equity-liquidity-monitor/blob/main/checklist/daily-checklist.md"
+              echo ""
+              echo "📝 总结模板："
+              echo "https://github.com/zfzfboom/us-equity-liquidity-monitor/blob/main/daily/template.md"
+              echo ""
+              echo "提交后可在 Actions 页面手动触发立即推送。"
+            } > message.txt
+          fi
+
+          # Send message
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
             --data-urlencode "text=$(cat message.txt)" \
             --data-urlencode "parse_mode=Markdown" \
             --data-urlencode "disable_web_page_preview=true"
-          
-          echo "Message sent to Telegram"
+
+          echo "Message sent successfully"
