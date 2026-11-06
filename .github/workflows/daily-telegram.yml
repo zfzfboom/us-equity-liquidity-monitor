@@ -1,0 +1,64 @@
+name: Daily Liquidity Summary to Telegram
+
+on:
+  schedule:
+    # 16:30 America/New_York ≈ 21:30 UTC (EST) / 20:30 UTC (EDT)
+    # Using 21:30 UTC as base (November is EST)
+    - cron: '30 21 * * 1-5'   # Monday to Friday
+  workflow_dispatch:          # Allow manual trigger
+
+jobs:
+  send-telegram:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get today date (US Eastern)
+        id: date
+        run: |
+          # Convert to America/New_York time
+          TZ=America/New_York date +'%Y-%m-%d' > date.txt
+          echo "today=$(cat date.txt)" >> $GITHUB_OUTPUT
+          echo "Today (ET): $(cat date.txt)"
+
+      - name: Prepare message
+        id: msg
+        run: |
+          TODAY=${{ steps.date.outputs.today }}
+          FILE="daily/${TODAY}.md"
+          
+          if [ -f "$FILE" ]; then
+            echo "Found daily report: $FILE"
+            # Extract content and escape for Telegram
+            CONTENT=$(cat "$FILE")
+            # Limit length if too long (Telegram limit ~4096)
+            CONTENT=$(echo "$CONTENT" | head -c 3500)
+            MESSAGE="📊 *美股流动性每日观测* (${TODAY})\n\n${CONTENT}"
+          else
+            echo "No daily report found for $TODAY, sending reminder"
+            MESSAGE="🚨 *美股流动性观测提醒* (${TODAY})\n\n今日尚未提交 daily/${TODAY}.md\n\n请尽快填写今日观测检查清单，并提交到仓库。\n\n快速入口：\nhttps://github.com/zfzfboom/us-equity-liquidity-monitor/blob/main/checklist/daily-checklist.md"
+          fi
+          
+          # Save to file for the next step
+          echo "$MESSAGE" > message.txt
+
+      - name: Send to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Error: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID secret is missing"
+            exit 1
+          fi
+          
+          MESSAGE=$(cat message.txt)
+          
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d text="${MESSAGE}" \
+            -d parse_mode="Markdown" \
+            -d disable_web_page_preview=true
+          
+          echo "Message sent to Telegram"
