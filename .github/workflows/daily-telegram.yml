@@ -18,81 +18,50 @@ jobs:
           TZ=America/New_York date +'%Y-%m-%d' > date.txt
           echo "today=$(cat date.txt)" >> $GITHUB_OUTPUT
 
-      - name: Fetch market data (VIX + VVIX + SPX + GEX)
+      - name: Fetch market data
         id: market
         run: |
           set +e
 
-          fetch_yahoo() {
-            local symbol=$1
-            curl -s --max-time 15 \
-              -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
-              -H "Accept: application/json" \
-              "https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=5d"
-          }
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-          parse_yahoo() {
-            local json=$1
-            local field=$2
-            echo "$json" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    m = d['chart']['result'][0]['meta']
-    v = m.get('$field', '')
-    print(v if v is not None else '')
-except Exception:
-    print('')
-" 2>/dev/null
-          }
+          # VIX
+          VIX_JSON=$(curl -s --max-time 15 -H "User-Agent: $UA" "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&range=5d")
+          VIX=$(echo "$VIX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["chart"]["result"][0]["meta"].get("regularMarketPrice","") or "")' 2>/dev/null || echo "")
+          VIX_CHG=$(echo "$VIX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["chart"]["result"][0]["meta"].get("regularMarketChangePercent","") or "")' 2>/dev/null || echo "")
 
-          # ---- VIX ----
-          VIX_JSON=$(fetch_yahoo "%5EVIX")
-          VIX=$(parse_yahoo "$VIX_JSON" "regularMarketPrice")
-          VIX_CHG=$(parse_yahoo "$VIX_JSON" "regularMarketChangePercent")
+          # VVIX
+          VVIX_JSON=$(curl -s --max-time 15 -H "User-Agent: $UA" "https://query1.finance.yahoo.com/v8/finance/chart/%5EVVIX?interval=1d&range=5d")
+          VVIX=$(echo "$VVIX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["chart"]["result"][0]["meta"].get("regularMarketPrice","") or "")' 2>/dev/null || echo "")
+          VVIX_CHG=$(echo "$VVIX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["chart"]["result"][0]["meta"].get("regularMarketChangePercent","") or "")' 2>/dev/null || echo "")
+
+          # SPX
+          SPX_JSON=$(curl -s --max-time 15 -H "User-Agent: $UA" "https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?interval=1d&range=5d")
+          SPX=$(echo "$SPX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["chart"]["result"][0]["meta"].get("regularMarketPrice","") or "")' 2>/dev/null || echo "")
+
           [ -z "$VIX" ] && VIX="N/A"
-          [ -z "$VIX_CHG" ] && VIX_CHG="N/A"
-
-          # ---- VVIX ----
-          VVIX_JSON=$(fetch_yahoo "%5EVVIX")
-          VVIX=$(parse_yahoo "$VVIX_JSON" "regularMarketPrice")
-          VVIX_CHG=$(parse_yahoo "$VVIX_JSON" "regularMarketChangePercent")
           [ -z "$VVIX" ] && VVIX="N/A"
-          [ -z "$VVIX_CHG" ] && VVIX_CHG="N/A"
-
-          # ---- SPX ----
-          SPX_JSON=$(fetch_yahoo "%5EGSPC")
-          SPX=$(parse_yahoo "$SPX_JSON" "regularMarketPrice")
           [ -z "$SPX" ] && SPX="N/A"
 
-          # Format change
-          format_chg() {
-            local v=$1
-            if [[ "$v" =~ ^-?[0-9]*\.?[0-9]+$ ]]; then
-              printf "%+.2f%%" "$v"
-            else
-              echo "N/A"
-            fi
-          }
-          VIX_CHG_FMT=$(format_chg "$VIX_CHG")
-          VVIX_CHG_FMT=$(format_chg "$VVIX_CHG")
+          # Format %
+          if [[ "$VIX_CHG" =~ ^-?[0-9] ]]; then VIX_CHG_FMT=$(printf "%+.2f%%" "$VIX_CHG"); else VIX_CHG_FMT="N/A"; fi
+          if [[ "$VVIX_CHG" =~ ^-?[0-9] ]]; then VVIX_CHG_FMT=$(printf "%+.2f%%" "$VVIX_CHG"); else VVIX_CHG_FMT="N/A"; fi
 
-          # ---- GEX from AlgoxFlow (SPY) ----
+          # SPY GEX (AlgoxFlow)
           GEX_JSON=$(curl -s --max-time 12 "https://algoxflow.com/api/gexmap?ticker=SPY")
-          REGIME=$(echo "$GEX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('regime',''))" 2>/dev/null || echo "")
-          TOTAL_GEX=$(echo "$GEX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('totalGex',''))" 2>/dev/null || echo "")
-          CALL_WALL=$(echo "$GEX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('callWall',''))" 2>/dev/null || echo "")
-          PUT_WALL=$(echo "$GEX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('putWall',''))" 2>/dev/null || echo "")
+          REGIME=$(echo "$GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("regime","") or "")' 2>/dev/null || echo "")
+          TOTAL_GEX=$(echo "$GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("totalGex","") or "")' 2>/dev/null || echo "")
+          CALL_WALL=$(echo "$GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("callWall","") or "")' 2>/dev/null || echo "")
+          PUT_WALL=$(echo "$GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("putWall","") or "")' 2>/dev/null || echo "")
 
-          # ---- Open SPX GEX levels ----
+          # SPX GEX levels (open data)
           SPX_GEX_JSON=$(curl -s --max-time 12 "https://raw.githubusercontent.com/dhawalc/spx-gamma-levels/main/data/latest.json")
-          SPX_REGIME=$(echo "$SPX_GEX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('gamma_regime',''))" 2>/dev/null || echo "")
-          SPX_FLIP=$(echo "$SPX_GEX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); v=d.get('zero_gamma_flip'); print(f'{v:.0f}' if isinstance(v,(int,float)) else '')" 2>/dev/null || echo "")
-          SPX_CALL_WALL=$(echo "$SPX_GEX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); v=d.get('call_wall'); print(f'{v:.0f}' if isinstance(v,(int,float)) else '')" 2>/dev/null || echo "")
-          SPX_PUT_WALL=$(echo "$SPX_GEX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); v=d.get('put_wall'); print(f'{v:.0f}' if isinstance(v,(int,float)) else '')" 2>/dev/null || echo "")
-          SPX_NET_GEX_BN=$(echo "$SPX_GEX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); v=d.get('net_gex_dollars'); print(f'{v/1e9:.1f}' if isinstance(v,(int,float)) else '')" 2>/dev/null || echo "")
+          SPX_REGIME=$(echo "$SPX_GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("gamma_regime","") or "")' 2>/dev/null || echo "")
+          SPX_FLIP=$(echo "$SPX_GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); v=d.get("zero_gamma_flip"); print(f"{v:.0f}" if isinstance(v,(int,float)) else "")' 2>/dev/null || echo "")
+          SPX_CALL_WALL=$(echo "$SPX_GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); v=d.get("call_wall"); print(f"{v:.0f}" if isinstance(v,(int,float)) else "")' 2>/dev/null || echo "")
+          SPX_PUT_WALL=$(echo "$SPX_GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); v=d.get("put_wall"); print(f"{v:.0f}" if isinstance(v,(int,float)) else "")' 2>/dev/null || echo "")
+          SPX_NET_GEX_BN=$(echo "$SPX_GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); v=d.get("net_gex_dollars"); print(f"{v/1e9:.1f}" if isinstance(v,(int,float)) else "")' 2>/dev/null || echo "")
 
-          # Defaults
           [ -z "$REGIME" ] && REGIME="N/A"
           [ -z "$TOTAL_GEX" ] && TOTAL_GEX="N/A"
           [ -z "$CALL_WALL" ] && CALL_WALL="N/A"
@@ -118,11 +87,10 @@ except Exception:
           echo "spx_put_wall=$SPX_PUT_WALL" >> $GITHUB_OUTPUT
           echo "spx_net_gex_bn=$SPX_NET_GEX_BN" >> $GITHUB_OUTPUT
 
-          echo "=== DEBUG ==="
-          echo "VIX=$VIX ($VIX_CHG_FMT) | VVIX=$VVIX ($VVIX_CHG_FMT) | SPX=$SPX"
-          echo "SPX Regime=$SPX_REGIME | Flip=$SPX_FLIP | NetGEX=$SPX_NET_GEX_BN Bn"
+          echo "VIX=$VIX ($VIX_CHG_FMT) VVIX=$VVIX ($VVIX_CHG_FMT) SPX=$SPX"
+          echo "SPX_Regime=$SPX_REGIME Flip=$SPX_FLIP NetGEX=${SPX_NET_GEX_BN}Bn"
 
-      - name: Prepare and send message
+      - name: Send to Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -143,10 +111,8 @@ except Exception:
           SPX_NET_GEX_BN: ${{ steps.market.outputs.spx_net_gex_bn }}
         run: |
           set -e
-
           if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
-            echo "Error: secrets missing"
-            exit 1
+            echo "Secrets missing"; exit 1
           fi
 
           FILE="daily/${TODAY}.md"
@@ -180,13 +146,13 @@ except Exception:
               tail -30 "$FILE" | head -c 1600
               echo ""
               echo "——"
-              echo "🔗 完整记录：https://github.com/zfzfboom/us-equity-liquidity-monitor/blob/main/daily/${TODAY}.md"
+              echo "🔗 https://github.com/zfzfboom/us-equity-liquidity-monitor/blob/main/daily/${TODAY}.md"
             else
               echo "⚠️ 今日尚未提交完整人工观测记录"
               echo ""
               echo "请补充期限结构、Skew、盘口等信号后提交 daily/${TODAY}.md"
               echo ""
-              echo "📋 检查清单：https://github.com/zfzfboom/us-equity-liquidity-monitor/blob/main/checklist/daily-checklist.md"
+              echo "📋 https://github.com/zfzfboom/us-equity-liquidity-monitor/blob/main/checklist/daily-checklist.md"
             fi
           } > message.txt
 
@@ -196,4 +162,4 @@ except Exception:
             --data-urlencode "parse_mode=Markdown" \
             --data-urlencode "disable_web_page_preview=true"
 
-          echo "Message sent successfully"
+          echo "Sent"
