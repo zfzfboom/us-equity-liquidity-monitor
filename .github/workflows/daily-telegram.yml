@@ -25,33 +25,50 @@ jobs:
 
           fetch_yahoo() {
             local symbol=$1
-            curl -s --max-time 12 -H "User-Agent: Mozilla/5.0" \
+            curl -s --max-time 15 \
+              -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
+              -H "Accept: application/json" \
               "https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=5d"
+          }
+
+          parse_yahoo() {
+            local json=$1
+            local field=$2
+            echo "$json" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    m = d['chart']['result'][0]['meta']
+    v = m.get('$field', '')
+    print(v if v is not None else '')
+except Exception:
+    print('')
+" 2>/dev/null
           }
 
           # ---- VIX ----
           VIX_JSON=$(fetch_yahoo "%5EVIX")
-          VIX=$(echo "$VIX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['chart']['result'][0]['meta'].get('regularMarketPrice',''))" 2>/dev/null)
-          VIX_CHG=$(echo "$VIX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['chart']['result'][0]['meta'].get('regularMarketChangePercent',''))" 2>/dev/null)
+          VIX=$(parse_yahoo "$VIX_JSON" "regularMarketPrice")
+          VIX_CHG=$(parse_yahoo "$VIX_JSON" "regularMarketChangePercent")
           [ -z "$VIX" ] && VIX="N/A"
           [ -z "$VIX_CHG" ] && VIX_CHG="N/A"
 
           # ---- VVIX ----
           VVIX_JSON=$(fetch_yahoo "%5EVVIX")
-          VVIX=$(echo "$VVIX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['chart']['result'][0]['meta'].get('regularMarketPrice',''))" 2>/dev/null)
-          VVIX_CHG=$(echo "$VVIX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['chart']['result'][0]['meta'].get('regularMarketChangePercent',''))" 2>/dev/null)
+          VVIX=$(parse_yahoo "$VVIX_JSON" "regularMarketPrice")
+          VVIX_CHG=$(parse_yahoo "$VVIX_JSON" "regularMarketChangePercent")
           [ -z "$VVIX" ] && VVIX="N/A"
           [ -z "$VVIX_CHG" ] && VVIX_CHG="N/A"
 
           # ---- SPX ----
           SPX_JSON=$(fetch_yahoo "%5EGSPC")
-          SPX=$(echo "$SPX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['chart']['result'][0]['meta'].get('regularMarketPrice',''))" 2>/dev/null)
+          SPX=$(parse_yahoo "$SPX_JSON" "regularMarketPrice")
           [ -z "$SPX" ] && SPX="N/A"
 
-          # Format change with sign and %
+          # Format change
           format_chg() {
             local v=$1
-            if [[ "$v" =~ ^-?[0-9] ]]; then
+            if [[ "$v" =~ ^-?[0-9]*\.?[0-9]+$ ]]; then
               printf "%+.2f%%" "$v"
             else
               echo "N/A"
@@ -61,20 +78,21 @@ jobs:
           VVIX_CHG_FMT=$(format_chg "$VVIX_CHG")
 
           # ---- GEX from AlgoxFlow (SPY) ----
-          GEX_JSON=$(curl -s --max-time 10 "https://algoxflow.com/api/gexmap?ticker=SPY")
-          REGIME=$(echo "$GEX_JSON" | grep -o '"regime":"[^"]*"' | head -1 | cut -d'"' -f4)
-          TOTAL_GEX=$(echo "$GEX_JSON" | grep -o '"totalGex":[-0-9.]*' | head -1 | cut -d: -f2)
-          CALL_WALL=$(echo "$GEX_JSON" | grep -o '"callWall":[0-9.]*' | head -1 | cut -d: -f2)
-          PUT_WALL=$(echo "$GEX_JSON" | grep -o '"putWall":[0-9.]*' | head -1 | cut -d: -f2)
+          GEX_JSON=$(curl -s --max-time 12 "https://algoxflow.com/api/gexmap?ticker=SPY")
+          REGIME=$(echo "$GEX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('regime',''))" 2>/dev/null || echo "")
+          TOTAL_GEX=$(echo "$GEX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('totalGex',''))" 2>/dev/null || echo "")
+          CALL_WALL=$(echo "$GEX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('callWall',''))" 2>/dev/null || echo "")
+          PUT_WALL=$(echo "$GEX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('putWall',''))" 2>/dev/null || echo "")
 
           # ---- Open SPX GEX levels ----
-          SPX_GEX_JSON=$(curl -s --max-time 10 "https://raw.githubusercontent.com/dhawalc/spx-gamma-levels/main/data/latest.json")
-          SPX_REGIME=$(echo "$SPX_GEX_JSON" | grep -o '"gamma_regime": "[^"]*"' | head -1 | cut -d'"' -f4)
-          SPX_FLIP=$(echo "$SPX_GEX_JSON" | grep -o '"zero_gamma_flip": [0-9.]*' | head -1 | awk '{print $2}')
-          SPX_CALL_WALL=$(echo "$SPX_GEX_JSON" | grep -o '"call_wall": [0-9.]*' | head -1 | awk '{print $2}')
-          SPX_PUT_WALL=$(echo "$SPX_GEX_JSON" | grep -o '"put_wall": [0-9.]*' | head -1 | awk '{print $2}')
-          SPX_NET_GEX=$(echo "$SPX_GEX_JSON" | grep -o '"net_gex_dollars": [-0-9.e+]*' | head -1 | awk '{print $2}')
+          SPX_GEX_JSON=$(curl -s --max-time 12 "https://raw.githubusercontent.com/dhawalc/spx-gamma-levels/main/data/latest.json")
+          SPX_REGIME=$(echo "$SPX_GEX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('gamma_regime',''))" 2>/dev/null || echo "")
+          SPX_FLIP=$(echo "$SPX_GEX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); v=d.get('zero_gamma_flip'); print(f'{v:.0f}' if isinstance(v,(int,float)) else '')" 2>/dev/null || echo "")
+          SPX_CALL_WALL=$(echo "$SPX_GEX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); v=d.get('call_wall'); print(f'{v:.0f}' if isinstance(v,(int,float)) else '')" 2>/dev/null || echo "")
+          SPX_PUT_WALL=$(echo "$SPX_GEX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); v=d.get('put_wall'); print(f'{v:.0f}' if isinstance(v,(int,float)) else '')" 2>/dev/null || echo "")
+          SPX_NET_GEX_BN=$(echo "$SPX_GEX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); v=d.get('net_gex_dollars'); print(f'{v/1e9:.1f}' if isinstance(v,(int,float)) else '')" 2>/dev/null || echo "")
 
+          # Defaults
           [ -z "$REGIME" ] && REGIME="N/A"
           [ -z "$TOTAL_GEX" ] && TOTAL_GEX="N/A"
           [ -z "$CALL_WALL" ] && CALL_WALL="N/A"
@@ -83,12 +101,7 @@ jobs:
           [ -z "$SPX_FLIP" ] && SPX_FLIP="N/A"
           [ -z "$SPX_CALL_WALL" ] && SPX_CALL_WALL="N/A"
           [ -z "$SPX_PUT_WALL" ] && SPX_PUT_WALL="N/A"
-
-          if [[ "$SPX_NET_GEX" =~ ^-?[0-9] ]]; then
-            SPX_NET_GEX_BN=$(echo "$SPX_NET_GEX" | awk '{printf "%.1f", $1/1e9}')
-          else
-            SPX_NET_GEX_BN="N/A"
-          fi
+          [ -z "$SPX_NET_GEX_BN" ] && SPX_NET_GEX_BN="N/A"
 
           echo "vix=$VIX" >> $GITHUB_OUTPUT
           echo "vix_chg=$VIX_CHG_FMT" >> $GITHUB_OUTPUT
@@ -105,7 +118,9 @@ jobs:
           echo "spx_put_wall=$SPX_PUT_WALL" >> $GITHUB_OUTPUT
           echo "spx_net_gex_bn=$SPX_NET_GEX_BN" >> $GITHUB_OUTPUT
 
-          echo "VIX=$VIX ($VIX_CHG_FMT) | VVIX=$VVIX ($VVIX_CHG_FMT) | SPX=$SPX | Regime=$SPX_REGIME"
+          echo "=== DEBUG ==="
+          echo "VIX=$VIX ($VIX_CHG_FMT) | VVIX=$VVIX ($VVIX_CHG_FMT) | SPX=$SPX"
+          echo "SPX Regime=$SPX_REGIME | Flip=$SPX_FLIP | NetGEX=$SPX_NET_GEX_BN Bn"
 
       - name: Prepare and send message
         env:
