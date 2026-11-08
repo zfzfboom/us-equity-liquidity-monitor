@@ -2,7 +2,9 @@ name: Daily Liquidity Summary to Telegram
 
 on:
   schedule:
-    - cron: '30 21 * * 1-5'
+    # 17:00 America/New_York = 22:00 UTC (EST) / 21:00 UTC (EDT)
+    # Using 22:00 UTC for winter (November)
+    - cron: '0 22 * * 1-5'
   workflow_dispatch:
 
 jobs:
