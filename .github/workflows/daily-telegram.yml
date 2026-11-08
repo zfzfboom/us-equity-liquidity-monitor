@@ -18,11 +18,34 @@ jobs:
           TZ=America/New_York date +'%Y-%m-%d' > date.txt
           echo "today=$(cat date.txt)" >> $GITHUB_OUTPUT
 
+      - name: Fetch market data (VIX + SPX)
+        id: market
+        run: |
+          # Fetch VIX
+          VIX_JSON=$(curl -s "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&range=1d" || true)
+          VIX=$(echo "$VIX_JSON" | grep -o '"regularMarketPrice":[0-9.]*' | head -1 | cut -d: -f2 || echo "N/A")
+          VIX_CHANGE=$(echo "$VIX_JSON" | grep -o '"regularMarketChangePercent":[0-9.-]*' | head -1 | cut -d: -f2 || echo "")
+
+          # Fetch SPX
+          SPX_JSON=$(curl -s "https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?interval=1d&range=1d" || true)
+          SPX=$(echo "$SPX_JSON" | grep -o '"regularMarketPrice":[0-9.]*' | head -1 | cut -d: -f2 || echo "N/A")
+          SPX_CHANGE=$(echo "$SPX_JSON" | grep -o '"regularMarketChangePercent":[0-9.-]*' | head -1 | cut -d: -f2 || echo "")
+
+          # Fallback if parsing fails
+          [ -z "$VIX" ] && VIX="N/A"
+          [ -z "$SPX" ] && SPX="N/A"
+
+          echo "vix=$VIX" >> $GITHUB_OUTPUT
+          echo "spx=$SPX" >> $GITHUB_OUTPUT
+          echo "VIX: $VIX | SPX: $SPX"
+
       - name: Prepare and send message
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TODAY: ${{ steps.date.outputs.today }}
+          VIX: ${{ steps.market.outputs.vix }}
+          SPX: ${{ steps.market.outputs.spx }}
         run: |
           set -e
 
@@ -36,28 +59,27 @@ jobs:
           if [ -f "$FILE" ]; then
             echo "Found daily report: $FILE"
 
-            # Build structured message
             {
               echo "📊 *美股流动性每日观测*"
               echo "📅 ${TODAY}"
               echo ""
+              echo "*市场快照*"
+              echo "• SPX：${SPX}"
+              echo "• VIX：${VIX}"
+              echo ""
               echo "*状态概览*"
 
-              # Try to extract key info
               STATUS=$(grep -E '综合状态|市场状态' "$FILE" | head -1 | sed 's/.*[：:]//' | xargs || true)
-              SPX=$(grep -iE 'SPX' "$FILE" | head -1 | sed 's/.*[：:]//' | xargs || true)
               GEX=$(grep -iE 'GEX' "$FILE" | head -1 | sed 's/.*[：:]//' | xargs || true)
               VVIX=$(grep -iE 'VVIX' "$FILE" | head -1 | sed 's/.*[：:]//' | xargs || true)
 
               [ -n "$STATUS" ] && echo "• 综合状态：*${STATUS}*"
-              [ -n "$SPX" ] && echo "• SPX：${SPX}"
               [ -n "$GEX" ] && echo "• GEX：${GEX}"
               [ -n "$VVIX" ] && echo "• VVIX：${VVIX}"
 
               echo ""
               echo "*详细内容*"
-              # Take the last part of the file as conclusion (usually the summary)
-              tail -40 "$FILE" | head -c 2600
+              tail -40 "$FILE" | head -c 2400
               echo ""
               echo "——"
               echo "🔗 完整记录：https://github.com/zfzfboom/us-equity-liquidity-monitor/blob/main/daily/${TODAY}.md"
@@ -70,10 +92,15 @@ jobs:
               echo "🚨 *美股流动性观测提醒*"
               echo "📅 ${TODAY}"
               echo ""
-              echo "今日尚未提交观测记录。"
+              echo "*市场快照（自动获取）*"
+              echo "• SPX：${SPX}"
+              echo "• VIX：${VIX}"
+              echo "• GEX：需手动填写（见检查清单）"
+              echo ""
+              echo "今日尚未提交完整观测记录。"
               echo ""
               echo "*请完成以下步骤：*"
-              echo "1. 填写每日检查清单"
+              echo "1. 填写每日检查清单（重点补充 GEX / VVIX / Skew 等）"
               echo "2. 使用模板创建 daily/${TODAY}.md"
               echo "3. 提交到仓库"
               echo ""
@@ -82,12 +109,9 @@ jobs:
               echo ""
               echo "📝 总结模板："
               echo "https://github.com/zfzfboom/us-equity-liquidity-monitor/blob/main/daily/template.md"
-              echo ""
-              echo "提交后可在 Actions 页面手动触发立即推送。"
             } > message.txt
           fi
 
-          # Send message
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
             --data-urlencode "text=$(cat message.txt)" \
