@@ -22,39 +22,67 @@ jobs:
         id: market
         run: |
           set +e
-
           UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
+          # Helper to get price + change
+          get_yahoo() {
+            local sym=$1
+            local json=$(curl -s --max-time 12 -H "User-Agent: $UA" "https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=5d")
+            echo "$json" | python3 -c '
+import sys, json
+try:
+  d = json.load(sys.stdin)
+  m = d["chart"]["result"][0]["meta"]
+  p = m.get("regularMarketPrice") or ""
+  c = m.get("regularMarketChangePercent") or ""
+  print(f"{p}|{c}")
+except:
+  print("|")
+' 2>/dev/null || echo "|"
+          }
+
           # VIX
-          VIX_JSON=$(curl -s --max-time 15 -H "User-Agent: $UA" "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&range=5d")
-          VIX=$(echo "$VIX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["chart"]["result"][0]["meta"].get("regularMarketPrice","") or "")' 2>/dev/null || echo "")
-          VIX_CHG=$(echo "$VIX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["chart"]["result"][0]["meta"].get("regularMarketChangePercent","") or "")' 2>/dev/null || echo "")
-
+          IFS='|' read -r VIX VIX_CHG <<< "$(get_yahoo '%5EVIX')"
           # VVIX
-          VVIX_JSON=$(curl -s --max-time 15 -H "User-Agent: $UA" "https://query1.finance.yahoo.com/v8/finance/chart/%5EVVIX?interval=1d&range=5d")
-          VVIX=$(echo "$VVIX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["chart"]["result"][0]["meta"].get("regularMarketPrice","") or "")' 2>/dev/null || echo "")
-          VVIX_CHG=$(echo "$VVIX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["chart"]["result"][0]["meta"].get("regularMarketChangePercent","") or "")' 2>/dev/null || echo "")
-
+          IFS='|' read -r VVIX VVIX_CHG <<< "$(get_yahoo '%5EVVIX')"
           # SPX
-          SPX_JSON=$(curl -s --max-time 15 -H "User-Agent: $UA" "https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?interval=1d&range=5d")
-          SPX=$(echo "$SPX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["chart"]["result"][0]["meta"].get("regularMarketPrice","") or "")' 2>/dev/null || echo "")
+          IFS='|' read -r SPX _ <<< "$(get_yahoo '%5EGSPC')"
+          # VIX9D (near-term)
+          IFS='|' read -r VIX9D VIX9D_CHG <<< "$(get_yahoo '%5EVIX9D')"
+          # VIX3M (longer-term reference)
+          IFS='|' read -r VIX3M _ <<< "$(get_yahoo '%5EVIX3M')"
 
           [ -z "$VIX" ] && VIX="N/A"
           [ -z "$VVIX" ] && VVIX="N/A"
           [ -z "$SPX" ] && SPX="N/A"
+          [ -z "$VIX9D" ] && VIX9D="N/A"
+          [ -z "$VIX3M" ] && VIX3M="N/A"
 
-          # Format %
-          if [[ "$VIX_CHG" =~ ^-?[0-9] ]]; then VIX_CHG_FMT=$(printf "%+.2f%%" "$VIX_CHG"); else VIX_CHG_FMT="N/A"; fi
-          if [[ "$VVIX_CHG" =~ ^-?[0-9] ]]; then VVIX_CHG_FMT=$(printf "%+.2f%%" "$VVIX_CHG"); else VVIX_CHG_FMT="N/A"; fi
+          fmt_chg() {
+            if [[ "$1" =~ ^-?[0-9] ]]; then printf "%+.2f%%" "$1"; else echo "N/A"; fi
+          }
+          VIX_CHG_FMT=$(fmt_chg "$VIX_CHG")
+          VVIX_CHG_FMT=$(fmt_chg "$VVIX_CHG")
+          VIX9D_CHG_FMT=$(fmt_chg "$VIX9D_CHG")
 
-          # SPY GEX (AlgoxFlow)
+          # Term structure status
+          TERM_STATUS="N/A"
+          if [[ "$VIX9D" =~ ^[0-9] && "$VIX" =~ ^[0-9] ]]; then
+            if (( $(echo "$VIX9D > $VIX" | bc -l) )); then
+              TERM_STATUS="⚠️ 近端倒挂 (VIX9D > VIX)"
+            else
+              TERM_STATUS="正常 (近端 < 30天)"
+            fi
+          fi
+
+          # SPY GEX
           GEX_JSON=$(curl -s --max-time 12 "https://algoxflow.com/api/gexmap?ticker=SPY")
           REGIME=$(echo "$GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("regime","") or "")' 2>/dev/null || echo "")
           TOTAL_GEX=$(echo "$GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("totalGex","") or "")' 2>/dev/null || echo "")
           CALL_WALL=$(echo "$GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("callWall","") or "")' 2>/dev/null || echo "")
           PUT_WALL=$(echo "$GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("putWall","") or "")' 2>/dev/null || echo "")
 
-          # SPX GEX levels (open data)
+          # SPX GEX levels
           SPX_GEX_JSON=$(curl -s --max-time 12 "https://raw.githubusercontent.com/dhawalc/spx-gamma-levels/main/data/latest.json")
           SPX_REGIME=$(echo "$SPX_GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("gamma_regime","") or "")' 2>/dev/null || echo "")
           SPX_FLIP=$(echo "$SPX_GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); v=d.get("zero_gamma_flip"); print(f"{v:.0f}" if isinstance(v,(int,float)) else "")' 2>/dev/null || echo "")
@@ -77,6 +105,10 @@ jobs:
           echo "vvix=$VVIX" >> $GITHUB_OUTPUT
           echo "vvix_chg=$VVIX_CHG_FMT" >> $GITHUB_OUTPUT
           echo "spx=$SPX" >> $GITHUB_OUTPUT
+          echo "vix9d=$VIX9D" >> $GITHUB_OUTPUT
+          echo "vix9d_chg=$VIX9D_CHG_FMT" >> $GITHUB_OUTPUT
+          echo "vix3m=$VIX3M" >> $GITHUB_OUTPUT
+          echo "term_status=$TERM_STATUS" >> $GITHUB_OUTPUT
           echo "regime=$REGIME" >> $GITHUB_OUTPUT
           echo "total_gex=$TOTAL_GEX" >> $GITHUB_OUTPUT
           echo "call_wall=$CALL_WALL" >> $GITHUB_OUTPUT
@@ -87,8 +119,7 @@ jobs:
           echo "spx_put_wall=$SPX_PUT_WALL" >> $GITHUB_OUTPUT
           echo "spx_net_gex_bn=$SPX_NET_GEX_BN" >> $GITHUB_OUTPUT
 
-          echo "VIX=$VIX ($VIX_CHG_FMT) VVIX=$VVIX ($VVIX_CHG_FMT) SPX=$SPX"
-          echo "SPX_Regime=$SPX_REGIME Flip=$SPX_FLIP NetGEX=${SPX_NET_GEX_BN}Bn"
+          echo "VIX=$VIX VIX9D=$VIX9D TERM=$TERM_STATUS | VVIX=$VVIX | SPX=$SPX"
 
       - name: Send to Telegram
         env:
@@ -100,6 +131,10 @@ jobs:
           VVIX: ${{ steps.market.outputs.vvix }}
           VVIX_CHG: ${{ steps.market.outputs.vvix_chg }}
           SPX: ${{ steps.market.outputs.spx }}
+          VIX9D: ${{ steps.market.outputs.vix9d }}
+          VIX9D_CHG: ${{ steps.market.outputs.vix9d_chg }}
+          VIX3M: ${{ steps.market.outputs.vix3m }}
+          TERM_STATUS: ${{ steps.market.outputs.term_status }}
           REGIME: ${{ steps.market.outputs.regime }}
           TOTAL_GEX: ${{ steps.market.outputs.total_gex }}
           CALL_WALL: ${{ steps.market.outputs.call_wall }}
@@ -126,6 +161,12 @@ jobs:
             echo "• VIX：${VIX}  (${VIX_CHG})"
             echo "• VVIX：${VVIX}  (${VVIX_CHG})"
             echo ""
+            echo "*波动率期限结构*"
+            echo "• VIX9D（近端）：${VIX9D}  (${VIX9D_CHG})"
+            echo "• VIX（30天）：${VIX}"
+            echo "• VIX3M（3个月）：${VIX3M}"
+            echo "• 结构状态：*${TERM_STATUS}*"
+            echo ""
             echo "*GEX 结构（自动）*"
             echo "• SPX Regime：*${SPX_REGIME}*"
             echo "• Net GEX：${SPX_NET_GEX_BN} Bn"
@@ -143,14 +184,14 @@ jobs:
               [ -n "$STATUS" ] && echo "• 综合状态：*${STATUS}*"
               echo ""
               echo "*详细内容*"
-              tail -30 "$FILE" | head -c 1600
+              tail -30 "$FILE" | head -c 1400
               echo ""
               echo "——"
               echo "🔗 https://github.com/zfzfboom/us-equity-liquidity-monitor/blob/main/daily/${TODAY}.md"
             else
               echo "⚠️ 今日尚未提交完整人工观测记录"
               echo ""
-              echo "请补充期限结构、Skew、盘口等信号后提交 daily/${TODAY}.md"
+              echo "请补充 Skew、盘口等信号后提交 daily/${TODAY}.md"
               echo ""
               echo "📋 https://github.com/zfzfboom/us-equity-liquidity-monitor/blob/main/checklist/daily-checklist.md"
             fi
