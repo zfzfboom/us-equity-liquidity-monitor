@@ -24,7 +24,6 @@ jobs:
           set +e
           UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-          # Helper to get price + change
           get_yahoo() {
             local sym=$1
             local json=$(curl -s --max-time 12 -H "User-Agent: $UA" "https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=5d")
@@ -41,15 +40,10 @@ except:
 ' 2>/dev/null || echo "|"
           }
 
-          # VIX
           IFS='|' read -r VIX VIX_CHG <<< "$(get_yahoo '%5EVIX')"
-          # VVIX
           IFS='|' read -r VVIX VVIX_CHG <<< "$(get_yahoo '%5EVVIX')"
-          # SPX
           IFS='|' read -r SPX _ <<< "$(get_yahoo '%5EGSPC')"
-          # VIX9D (near-term)
           IFS='|' read -r VIX9D VIX9D_CHG <<< "$(get_yahoo '%5EVIX9D')"
-          # VIX3M (longer-term reference)
           IFS='|' read -r VIX3M _ <<< "$(get_yahoo '%5EVIX3M')"
 
           [ -z "$VIX" ] && VIX="N/A"
@@ -65,15 +59,20 @@ except:
           VVIX_CHG_FMT=$(fmt_chg "$VVIX_CHG")
           VIX9D_CHG_FMT=$(fmt_chg "$VIX9D_CHG")
 
-          # Term structure status
-          TERM_STATUS="N/A"
-          if [[ "$VIX9D" =~ ^[0-9] && "$VIX" =~ ^[0-9] ]]; then
-            if (( $(echo "$VIX9D > $VIX" | bc -l) )); then
-              TERM_STATUS="⚠️ 近端倒挂 (VIX9D > VIX)"
-            else
-              TERM_STATUS="正常 (近端 < 30天)"
-            fi
-          fi
+          # Term structure: compare VIX9D vs VIX using python
+          TERM_STATUS=$(python3 -c "
+vix9d = '$VIX9D'
+vix = '$VIX'
+try:
+  a = float(vix9d)
+  b = float(vix)
+  if a > b:
+    print('⚠️ 近端倒挂 (VIX9D > VIX)')
+  else:
+    print('正常 (近端 < 30天)')
+except:
+  print('N/A')
+")
 
           # SPY GEX
           GEX_JSON=$(curl -s --max-time 12 "https://algoxflow.com/api/gexmap?ticker=SPY")
@@ -119,7 +118,7 @@ except:
           echo "spx_put_wall=$SPX_PUT_WALL" >> $GITHUB_OUTPUT
           echo "spx_net_gex_bn=$SPX_NET_GEX_BN" >> $GITHUB_OUTPUT
 
-          echo "VIX=$VIX VIX9D=$VIX9D TERM=$TERM_STATUS | VVIX=$VVIX | SPX=$SPX"
+          echo "VIX=$VIX VIX9D=$VIX9D TERM=$TERM_STATUS"
 
       - name: Send to Telegram
         env:
