@@ -27,17 +27,11 @@ jobs:
           get_yahoo() {
             local sym=$1
             local json=$(curl -s --max-time 12 -H "User-Agent: $UA" "https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=5d")
-            echo "$json" | python3 -c '
-import sys, json
+            echo "$json" | python3 -c 'import sys,json
 try:
-  d = json.load(sys.stdin)
-  m = d["chart"]["result"][0]["meta"]
-  p = m.get("regularMarketPrice") or ""
-  c = m.get("regularMarketChangePercent") or ""
-  print(f"{p}|{c}")
-except:
-  print("|")
-' 2>/dev/null || echo "|"
+ d=json.load(sys.stdin); m=d["chart"]["result"][0]["meta"]
+ print(str(m.get("regularMarketPrice") or "")+"|"+str(m.get("regularMarketChangePercent") or ""))
+except: print("|")' 2>/dev/null || echo "|"
           }
 
           IFS='|' read -r VIX VIX_CHG <<< "$(get_yahoo '%5EVIX')"
@@ -52,38 +46,25 @@ except:
           [ -z "$VIX9D" ] && VIX9D="N/A"
           [ -z "$VIX3M" ] && VIX3M="N/A"
 
-          fmt_chg() {
-            if [[ "$1" =~ ^-?[0-9] ]]; then printf "%+.2f%%" "$1"; else echo "N/A"; fi
-          }
+          fmt_chg() { if [[ "$1" =~ ^-?[0-9] ]]; then printf "%+.2f%%" "$1"; else echo "N/A"; fi; }
           VIX_CHG_FMT=$(fmt_chg "$VIX_CHG")
           VVIX_CHG_FMT=$(fmt_chg "$VVIX_CHG")
           VIX9D_CHG_FMT=$(fmt_chg "$VIX9D_CHG")
 
-          # Term structure: compare VIX9D vs VIX using python
-          TERM_STATUS=$(python3 -c "
-vix9d = '$VIX9D'
-vix = '$VIX'
+          TERM_STATUS=$(python3 -c "a='$VIX9D'; b='$VIX'
 try:
-  a = float(vix9d)
-  b = float(vix)
-  if a > b:
-    print('⚠️ 近端倒挂 (VIX9D > VIX)')
-  else:
-    print('正常 (近端 < 30天)')
+  print('近端倒挂 (VIX9D > VIX)' if float(a)>float(b) else '正常 (近端 < 30天)')
 except:
-  print('N/A')
-")
+  print('N/A')")
 
-          # SPY GEX
           GEX_JSON=$(curl -s --max-time 12 "https://algoxflow.com/api/gexmap?ticker=SPY")
-          REGIME=$(echo "$GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("regime","") or "")' 2>/dev/null || echo "")
-          TOTAL_GEX=$(echo "$GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("totalGex","") or "")' 2>/dev/null || echo "")
-          CALL_WALL=$(echo "$GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("callWall","") or "")' 2>/dev/null || echo "")
-          PUT_WALL=$(echo "$GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("putWall","") or "")' 2>/dev/null || echo "")
+          REGIME=$(echo "$GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("regime") or "")' 2>/dev/null || echo "")
+          TOTAL_GEX=$(echo "$GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("totalGex") or "")' 2>/dev/null || echo "")
+          CALL_WALL=$(echo "$GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("callWall") or "")' 2>/dev/null || echo "")
+          PUT_WALL=$(echo "$GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("putWall") or "")' 2>/dev/null || echo "")
 
-          # SPX GEX levels
           SPX_GEX_JSON=$(curl -s --max-time 12 "https://raw.githubusercontent.com/dhawalc/spx-gamma-levels/main/data/latest.json")
-          SPX_REGIME=$(echo "$SPX_GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("gamma_regime","") or "")' 2>/dev/null || echo "")
+          SPX_REGIME=$(echo "$SPX_GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("gamma_regime") or "")' 2>/dev/null || echo "")
           SPX_FLIP=$(echo "$SPX_GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); v=d.get("zero_gamma_flip"); print(f"{v:.0f}" if isinstance(v,(int,float)) else "")' 2>/dev/null || echo "")
           SPX_CALL_WALL=$(echo "$SPX_GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); v=d.get("call_wall"); print(f"{v:.0f}" if isinstance(v,(int,float)) else "")' 2>/dev/null || echo "")
           SPX_PUT_WALL=$(echo "$SPX_GEX_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); v=d.get("put_wall"); print(f"{v:.0f}" if isinstance(v,(int,float)) else "")' 2>/dev/null || echo "")
