@@ -2,7 +2,30 @@
 set +e
 
 UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-TODAY=$(TZ=America/New_York date +%Y-%m-%d)
+
+# 从 Yahoo 日线数据中提取真实最后交易日（避免 GitHub 延迟导致日期显示落后一天）
+get_data_date() {
+  curl -s --max-time 12 -H "User-Agent: $UA" \
+    "https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?interval=1d&range=5d" |
+  python3 -c '
+import sys, json
+from datetime import datetime, timezone
+try:
+  r = json.load(sys.stdin)["chart"]["result"][0]
+  ts = r["timestamp"][-1]
+  # Yahoo timestamp is Unix seconds (UTC)
+  dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+  # 美东日期（考虑夏令时用固定偏移近似，足够用于标签）
+  print(dt.strftime("%Y-%m-%d"))
+except Exception:
+  print("unknown")
+'
+}
+
+TODAY=$(get_data_date)
+if [ "$TODAY" = "unknown" ] || [ -z "$TODAY" ]; then
+  TODAY=$(TZ=America/New_York date +%Y-%m-%d)
+fi
 
 fetch() {
   curl -s --max-time 12 -H "User-Agent: $UA" \
@@ -119,7 +142,7 @@ DAILY_FILE="daily/${TODAY}.md"
 HAS_DAILY=0
 [ -f "$DAILY_FILE" ] && HAS_DAILY=1
 
-echo "VIX=$VIX SKEW=$SKEW TERM=$TERM LIQ=$LIQ_STATUS RANGE=$RANGE_BPS SPX=$SPX"
+echo "DATA_DATE=$TODAY VIX=$VIX SKEW=$SKEW TERM=$TERM LIQ=$LIQ_STATUS RANGE=$RANGE_BPS SPX=$SPX"
 
 cat > /tmp/msg.txt << EOF
 📊 *美股流动性每日观测*
