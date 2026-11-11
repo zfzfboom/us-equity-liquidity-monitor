@@ -2,14 +2,14 @@ name: Daily Liquidity Summary to Telegram
 
 on:
   schedule:
-    # 17:00 America/New_York = 22:00 UTC (EST) / 21:00 UTC (EDT)
-    # Every day including weekends
-    - cron: '0 22 * * *'
+    # UTC 23:00 每天（含周末），收盘后数据更完整，减少日期/数据滞后
+    - cron: '0 23 * * *'
   workflow_dispatch:
 
 jobs:
   send:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
